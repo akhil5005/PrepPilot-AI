@@ -1,0 +1,22 @@
+4 layers architecture
+
+
+UI
+=>component
+=>pages
+(whaever we wants to show the user)
+
+
+HOOK
+=> hooks
+(for managing state and api layers)
+
+STATE
+=> auth.context.jsx
+=> ai.context.jsx
+(data store of user which we want to show)
+
+API 
+=> services
+    =>auth.api.js
+(The frontend interacts with backend through apis like login register logout and get-me)
