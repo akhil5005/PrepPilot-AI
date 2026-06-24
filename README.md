@@ -81,7 +81,13 @@ Backend: https://preppilot-ai-backend.onrender.com
 
 ### Generated Resume PDF
 
-"C:\git genai photos\pdf by ai\resume_6a30efae0fe91a7aae8a4ca1.pdf"
+The application also supports AI-generated resume PDF creation and download.
+
+<img width="611" height="680" alt="Screenshot 2026-06-24 233059" src="https://github.com/user-attachments/assets/fc665ad4-414c-4686-a605-3173247a61f4" />
+
+<img width="607" height="526" alt="pdf2" src="https://github.com/user-attachments/assets/bca3b32f-067b-48c7-842a-c1eeda8427a5" />
+
+
 
 ## How It Works
 
@@ -304,7 +310,7 @@ Important points:
 
 **Akhil Mittal**
 
-* GitHub: https://github.com/your-github-username
-* Email: [your-email@example.com](mailto:your-email@example.com)
+* GitHub: [https://github.com/your-github-username](https://github.com/akhil5005)
+* Email: [your-email@example.com](mailto:amittal2_be23@thapar.edu)
 
 
