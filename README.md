@@ -7,6 +7,7 @@ The application analyzes the user's profile and job requirements, then generates
 ## Live Demo
 
 Frontend: https://prep-pilot-ai-theta.vercel.app
+
 Backend: https://preppilot-ai-backend.onrender.com
 
 ## Features
