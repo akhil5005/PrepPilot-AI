@@ -310,7 +310,8 @@ Important points:
 
 **Akhil Mittal**
 
-* GitHub: [https://github.com/your-github-username](https://github.com/akhil5005)
-* Email: [your-email@example.com](mailto:amittal2_be23@thapar.edu)
+* GitHub: [akhil5005](https://github.com/akhil5005)
+* Email: [amittal2_be23@thapar.edu](mailto:amittal2_be23@thapar.edu)
+
 
 
