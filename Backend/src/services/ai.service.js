@@ -144,18 +144,62 @@ ${jobDescription}
       },
     });
 
-    console.log("========== GEMINI RESPONSE ==========");
-    console.log(response.text);
-    console.log("=====================================");
+    const text = response.text;
 
-    const parsed = JSON.parse(response.text);
+    /*
+     * gemini-2.5-flash is a thinking model. If it spends its whole output
+     * budget on reasoning, it returns an empty or truncated body with a
+     * finishReason of MAX_TOKENS. JSON.parse then fails with a misleading
+     * "Unexpected end of JSON input", so check explicitly and report the
+     * finishReason, which is what actually explains the failure.
+     */
+    if (!text || !text.trim()) {
+      const finishReason =
+        response?.candidates?.[0]?.finishReason || "UNKNOWN";
+
+      throw new Error(
+        `Gemini returned an empty response (finishReason: ${finishReason})`,
+      );
+    }
+
+    let parsed;
+
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      throw new Error(
+        `Gemini returned a non-JSON response: ${text.slice(0, 200)}`,
+      );
+    }
 
     return Array.isArray(parsed) ? parsed[0] : parsed;
   } catch (error) {
-    console.log("Gemini interview report generation failed:", error);
+    /*
+     * Log the whole error server side, then surface a message that actually
+     * names the cause. The previous version replaced every failure with the
+     * same sentence, which meant a quota error, an invalid API key and a
+     * truncated response were indistinguishable — both in the logs and to the
+     * caller — and the problem could not be diagnosed without guessing.
+     */
+    console.error("Gemini interview report generation failed:", error);
+
+    /* The @google/genai SDK puts the HTTP status on the error. */
+    const status = error?.status ?? error?.response?.status;
+
+    if (status === 429) {
+      throw new Error(
+        "The AI service quota has been exceeded. Please try again later.",
+      );
+    }
+
+    if (status === 401 || status === 403) {
+      throw new Error(
+        "The AI service rejected the API key. Check GEMINI_API_KEY on the server.",
+      );
+    }
 
     throw new Error(
-      "AI interview report generation failed. Please try again later.",
+      `AI interview report generation failed: ${error?.message || "unknown error"}`,
     );
   }
 }
@@ -326,3 +370,4 @@ module.exports = {
   generateInterviewReport,
   generateResumePdf,
 };
+
