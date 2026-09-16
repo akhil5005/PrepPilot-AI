@@ -6,7 +6,8 @@
   "scripts": {
     "postinstall": "npx puppeteer browsers install chrome",
     "start": "node server.js",
-    "dev": "npx nodemon server.js"
+    "dev": "npx nodemon server.js",
+    "test:auth": "node tests/auth.e2e.test.js"
   },
   "keywords": [],
   "author": "",
