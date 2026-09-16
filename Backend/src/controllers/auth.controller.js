@@ -45,8 +45,14 @@ const registerUserController = asyncHandler(async (req, res) => {
    * collection are the real guarantee, and the duplicate-key error they raise
    * is translated into a 409 by the error middleware.
    */
+  /*
+   * Case-insensitive collation so this also catches accounts stored before
+   * emails were normalised. Without it, an existing "Akhil@Gmail.com" would not
+   * block a signup for "akhil@gmail.com", and the two would coexist.
+   */
   const existing = await userModel
     .findOne({ $or: [{ username }, { email }] })
+    .collation({ locale: "en", strength: 2 })
     .lean();
 
   if (existing) {
@@ -83,8 +89,12 @@ const registerUserController = asyncHandler(async (req, res) => {
 const loginUserController = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
 
-  /* `password` is select:false on the schema, so ask for it explicitly. */
-  const user = await userModel.findOne({ email }).select("+password");
+  /*
+   * `password` is select:false on the schema, so ask for it explicitly.
+   * findByEmail also matches accounts stored before emails were normalised to
+   * lowercase; a plain findOne would lock those users out permanently.
+   */
+  const user = await userModel.findByEmail(email, "+password");
 
   if (!user) {
     /* Equalise timing, then fail with the same message as a bad password. */
@@ -109,6 +119,17 @@ const loginUserController = asyncHandler(async (req, res) => {
   }
 
   user.lastLoginAt = new Date();
+
+  /*
+   * Self-healing migration: if this account was stored with a non-lowercase
+   * email, normalise it now that we know the credentials are valid. Over time
+   * this drains the legacy set without a manual migration script, and each
+   * account only takes the slower collation lookup once.
+   */
+  if (user.email !== email) {
+    user.email = email;
+  }
+
   await user.save({ validateBeforeSave: false });
 
   await tokenService.issueSession(res, user, requestContext(req));

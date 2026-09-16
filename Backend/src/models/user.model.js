@@ -96,6 +96,49 @@ userSchema.methods.comparePassword = function comparePassword(
 };
 
 /**
+ * @description Find a user by email, tolerating accounts that predate email
+ * normalisation.
+ *
+ * New accounts are stored lowercase, so the exact match below handles them and
+ * uses the unique index. But accounts created BEFORE emails were normalised may
+ * be stored as "Akhil@Gmail.com", and since callers now pass a lowercased
+ * address, an exact match would never find them — locking those users out of
+ * their own accounts permanently.
+ *
+ * The fallback repeats the lookup with a case-insensitive collation
+ * (`strength: 2` ignores case and accents). It only runs when the fast path
+ * misses, so the common case stays indexed.
+ *
+ * @param {string} email An already-lowercased address.
+ * @param {string} [select] Extra fields to select, e.g. "+password".
+ * @returns {Promise<object|null>}
+ */
+userSchema.statics.findByEmail = async function findByEmail(email, select) {
+  const exact = this.findOne({ email });
+
+  if (select) {
+    exact.select(select);
+  }
+
+  const found = await exact;
+
+  if (found) {
+    return found;
+  }
+
+  const legacy = this.findOne({ email }).collation({
+    locale: "en",
+    strength: 2,
+  });
+
+  if (select) {
+    legacy.select(select);
+  }
+
+  return legacy;
+};
+
+/**
  * @description The public shape of a user, safe to return in any response.
  */
 userSchema.methods.toPublicJSON = function toPublicJSON() {
