@@ -7,6 +7,129 @@ const ai = new GoogleGenAI({
   apiKey: process.env.Gemini_API_Key,
 });
 
+const MODEL = "gemini-2.5-flash";
+
+/**
+ * @description Pause for the given number of milliseconds.
+ */
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * @description Is this failure worth retrying?
+ *
+ * Rate limits (429) and Google-side outages (500/503) are transient, as is an
+ * empty body, which is usually the model having run out of output budget.
+ * A rejected key or a malformed request will fail identically every time, so
+ * retrying those only makes the user wait longer for the same error.
+ */
+function isTransient(error) {
+  const status = error?.status ?? error?.response?.status;
+
+  if (status === 429 || status === 500 || status === 502 || status === 503) {
+    return true;
+  }
+
+  return Boolean(error?.retryable);
+}
+
+/**
+ * Call Gemini and return parsed JSON, retrying transient failures.
+ *
+ * Two settings here are what make this reliable, and both address the cause of
+ * the intermittent 500s this replaced:
+ *
+ * `thinkingBudget: 0` turns off the model's internal reasoning pass.
+ * gemini-2.5-flash is a thinking model, and thinking tokens are drawn from the
+ * same output budget as the answer. On a long request like the interview
+ * report it could spend the entire budget reasoning and return an empty body
+ * with finishReason MAX_TOKENS — which is exactly why the same input succeeded
+ * one minute and failed the next.
+ *
+ * `maxOutputTokens` is then set explicitly and generously, so a long but
+ * legitimate answer is not cut off mid-JSON.
+ *
+ * @param {object} options
+ * @param {string} options.prompt
+ * @param {number} options.maxOutputTokens
+ * @param {string} options.label Used in log messages.
+ * @param {number} [options.attempts]
+ * @returns {Promise<object>} the parsed JSON response
+ */
+async function generateJson({ prompt, maxOutputTokens, label, attempts = 3 }) {
+  let lastError;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await ai.models.generateContent({
+        model: MODEL,
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          maxOutputTokens,
+          thinkingConfig: { thinkingBudget: 0 },
+        },
+      });
+
+      const text = response.text;
+
+      if (!text || !text.trim()) {
+        const finishReason =
+          response?.candidates?.[0]?.finishReason || "UNKNOWN";
+
+        const err = new Error(
+          `Gemini returned an empty response (finishReason: ${finishReason})`,
+        );
+        /* Worth another attempt: usually a truncated or filtered generation. */
+        err.retryable = true;
+        throw err;
+      }
+
+      /*
+       * responseMimeType should prevent code fences, but strip them defensively
+       * rather than fail the whole request on a stray ```json wrapper.
+       */
+      const cleaned = text
+        .trim()
+        .replace(/^```(?:json)?\s*/i, "")
+        .replace(/\s*```$/, "");
+
+      let parsed;
+
+      try {
+        parsed = JSON.parse(cleaned);
+      } catch {
+        const err = new Error(
+          `Gemini returned a non-JSON response: ${cleaned.slice(0, 200)}`,
+        );
+        err.retryable = true;
+        throw err;
+      }
+
+      return Array.isArray(parsed) ? parsed[0] : parsed;
+    } catch (error) {
+      lastError = error;
+
+      const canRetry = attempt < attempts && isTransient(error);
+
+      console.error(
+        `[ai] ${label} attempt ${attempt}/${attempts} failed:`,
+        error?.message || error,
+      );
+
+      if (!canRetry) {
+        break;
+      }
+
+      /* Exponential backoff: 1s, then 3s. */
+      await delay(attempt * 2000 - 1000);
+    }
+  }
+
+  throw lastError;
+}
+
 const interviewReportSchema = z.object({
   matchScore: z
     .number()
@@ -135,66 +258,35 @@ ${jobDescription}
 `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        // responseSchema: zodToJsonSchema(interviewReportSchema),
-      },
-    });
-
-    const text = response.text;
-
     /*
-     * gemini-2.5-flash is a thinking model. If it spends its whole output
-     * budget on reasoning, it returns an empty or truncated body with a
-     * finishReason of MAX_TOKENS. JSON.parse then fails with a misleading
-     * "Unexpected end of JSON input", so check explicitly and report the
-     * finishReason, which is what actually explains the failure.
+     * The report is large — 10 technical questions with model answers, 5
+     * behavioural questions, skill gaps and a 7 day plan — so it needs a
+     * generous output budget to avoid being truncated mid-JSON.
      */
-    if (!text || !text.trim()) {
-      const finishReason =
-        response?.candidates?.[0]?.finishReason || "UNKNOWN";
-
-      throw new Error(
-        `Gemini returned an empty response (finishReason: ${finishReason})`,
-      );
-    }
-
-    let parsed;
-
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      throw new Error(
-        `Gemini returned a non-JSON response: ${text.slice(0, 200)}`,
-      );
-    }
-
-    return Array.isArray(parsed) ? parsed[0] : parsed;
+    return await generateJson({
+      prompt,
+      maxOutputTokens: 16384,
+      label: "interview report",
+    });
   } catch (error) {
     /*
-     * Log the whole error server side, then surface a message that actually
-     * names the cause. The previous version replaced every failure with the
-     * same sentence, which meant a quota error, an invalid API key and a
-     * truncated response were indistinguishable — both in the logs and to the
-     * caller — and the problem could not be diagnosed without guessing.
+     * Surface a message that actually names the cause. The original version
+     * replaced every failure with the same sentence, which meant a quota error,
+     * a rejected API key and a truncated response were indistinguishable — both
+     * in the logs and to the caller — and could not be diagnosed without
+     * guessing.
      */
-    console.error("Gemini interview report generation failed:", error);
-
-    /* The @google/genai SDK puts the HTTP status on the error. */
     const status = error?.status ?? error?.response?.status;
 
     if (status === 429) {
       throw new Error(
-        "The AI service quota has been exceeded. Please try again later.",
+        "The AI service is rate limited right now. Please try again in a minute.",
       );
     }
 
     if (status === 401 || status === 403) {
       throw new Error(
-        "The AI service rejected the API key. Check GEMINI_API_KEY on the server.",
+        "The AI service rejected the API key. Check the Gemini key on the server.",
       );
     }
 
@@ -341,16 +433,14 @@ Rules:
 `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        // Do not use responseSchema here for now.
-      },
+    /* Same hardening as the interview report: no thinking, explicit budget,
+     * retry on transient failures. A full resume in HTML is smaller than the
+     * report, so it needs less room. */
+    const jsonContent = await generateJson({
+      prompt,
+      maxOutputTokens: 8192,
+      label: "resume html",
     });
-
-    const jsonContent = JSON.parse(response.text);
 
     if (!jsonContent.html) {
       throw new Error("AI did not return resume HTML.");
@@ -360,9 +450,17 @@ Rules:
 
     return pdfBuffer;
   } catch (error) {
-    console.log("Gemini resume generation failed:", error);
+    const status = error?.status ?? error?.response?.status;
 
-    throw new Error("AI resume generation failed. Please try again later.");
+    if (status === 429) {
+      throw new Error(
+        "The AI service is rate limited right now. Please try again in a minute.",
+      );
+    }
+
+    throw new Error(
+      `AI resume generation failed: ${error?.message || "unknown error"}`,
+    );
   }
 }
 
