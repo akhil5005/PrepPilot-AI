@@ -1,9 +1,9 @@
-import axios from "axios";
-
-const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL,
-  withCredentials: true,
-});
+/*
+ * Uses the shared client so these calls get the same silent token-refresh
+ * behaviour as the auth calls. With short lived access tokens, a long running
+ * page that did not refresh would start failing with 401s after 15 minutes.
+ */
+import api from "../../../lib/api";
 
 /**
  * @description Service to generate interview report based on user self description, resume and job description.
