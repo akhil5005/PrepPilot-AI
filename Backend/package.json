@@ -7,7 +7,8 @@
     "postinstall": "npx puppeteer browsers install chrome",
     "start": "node server.js",
     "dev": "npx nodemon server.js",
-    "test:auth": "node tests/auth.e2e.test.js"
+    "test:auth": "node tests/auth.e2e.test.js",
+    "test:legacy": "node tests/legacy-email-login.test.js"
   },
   "keywords": [],
   "author": "",
